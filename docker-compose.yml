@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Message Broker for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: foodrescue-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Flask REST API Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: foodrescue-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=foodrescue-production-secret-key-2026
+      - DATABASE_URL=sqlite:////app/data/foodrescue.db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ENABLE_LOCAL_SCHEDULER=false
+    volumes:
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Celery Background Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: foodrescue-celery-worker
+    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=info
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=sqlite:////app/data/foodrescue.db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # Celery Beat Scheduled Task Runner (Periodic Expiration & Nightly Reports)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: foodrescue-celery-beat
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=sqlite:////app/data/foodrescue.db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # Vue 3 Frontend (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: foodrescue-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  sqlite_data:
